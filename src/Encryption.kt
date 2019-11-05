@@ -1,159 +1,96 @@
-
 import java.io.File
-import java.nio.charset.Charset
-import java.security.KeyStore
-import java.util.*
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 fun main() {
     val text = File("src/data.json").readText(Charsets.UTF_8)
-    val map = encrypt(text.toByteArray(), "badpassword".toCharArray())
-    println(map["salt"]?.toString(Charset.defaultCharset()))
-    println(map["iv"]?.toString(Charset.defaultCharset()))
-    map["encrypted"]?.let { File("public/data.enc").writeBytes(it) }
-    println("${map["encrypted"]}")
-    val result = decrypt(map, "badpawssword".toCharArray())
-    println("$result")
+
+    val encryptedText = encrypt(text.toByteArray(), "badpassword".toCharArray())
+
+    File("public/data.enc").writeBytes(encryptedText)
+
+    val decryptedText = decrypt(encryptedText, "badpassword".toCharArray())
+    val decryptedTextStr = decryptedText?.let { String(it) }
+    println("$decryptedTextStr")
 }
 
-fun encrypt(
-    dataToEncrypt: ByteArray,
-    password: CharArray
-): HashMap<String, ByteArray> {
-    val map = HashMap<String, ByteArray>()
-
-    try {
-        // 1
-        //Random salt for next step
-        val salt = "nacllcan".toByteArray()
+// TODO random salt
 //        val random = SecureRandom()
 //        val salt = ByteArray(8)
 //        random.nextBytes(salt)
 
-        // 2
-        //PBKDF2 - derive the key from the password, don't use passwords directly
-        val pbKeySpec = PBEKeySpec(password, salt, 1324, 256)
-        val secretKeyFactory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val keyBytes = secretKeyFactory.generateSecret(pbKeySpec).encoded
-        val keySpec = SecretKeySpec(keyBytes, "AES")
+val salt = "nacllcan".toByteArray()
 
-        // 3
-        //Create initialization vector for AES
+
+// TODO random initialization vector für AES
 //        val ivRandom = SecureRandom() //not caching previous seeded instance of SecureRandom
 //        val iv = ByteArray(16)
 //        ivRandom.nextBytes(iv)
-        val iv = "someIV12345abcde".toByteArray()
+
+val iv = "someIV12345abcde".toByteArray()
+
+const val secretKeyFactoryInstance = "PBKDF2WithHmacSHA256"
+const val numberOfIterations = 1324
+const val keySize = 256
+
+const val cipherInstance = "AES/CBC/PKCS5Padding"
+
+
+var keySpec: SecretKeySpec? = null
+
+fun encrypt(
+    dataToEncrypt: ByteArray,
+    password: CharArray
+): ByteArray {
+
+    try {
+        // PBKDF2 - mit password den key erzeugen
+        val pbKeySpec = PBEKeySpec(password, salt, numberOfIterations, keySize)
+        val secretKeyFactory = SecretKeyFactory.getInstance(secretKeyFactoryInstance)
+        val keyBytes = secretKeyFactory.generateSecret(pbKeySpec).encoded
+        keySpec = SecretKeySpec(keyBytes, "AES")
+
         val ivSpec = IvParameterSpec(iv)
 
-        // 4
-        //Encrypt
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        // Encryption
+        val cipher = Cipher.getInstance(cipherInstance)
         cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec)
-        val encrypted = cipher.doFinal(dataToEncrypt)
 
-        // 5
-        map["salt"] = salt
-        map["iv"] = iv
-        map["encrypted"] = encrypted
+        val encrypted = cipher.doFinal(dataToEncrypt)
+        return encrypted
+
     } catch (e: Exception) {
         println("encryption exception $e")
+        throw e
     }
-
-    return map
-
 }
 
-fun decrypt(map: HashMap<String, ByteArray>, password: CharArray): ByteArray? {
-    var decrypted: ByteArray? = null
+fun decrypt(
+    encrypted: ByteArray,
+    password: CharArray
+): ByteArray? {
     try {
-        // 1
-        val salt = map["salt"]
-        val iv = map["iv"]
-        val encrypted = map["encrypted"]
-
-        // 2
-        //regenerate key from password
-        val pbKeySpec = PBEKeySpec(password, salt, 1324, 256)
-        val secretKeyFactory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        // PBKDF2 - mit password den key erzeugen
+        val pbKeySpec = PBEKeySpec(password, salt, numberOfIterations, keySize)
+        val secretKeyFactory = SecretKeyFactory.getInstance(secretKeyFactoryInstance)
         val keyBytes = secretKeyFactory.generateSecret(pbKeySpec).encoded
         val keySpec = SecretKeySpec(keyBytes, "AES")
 
-        // 3
-        //Decrypt
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         val ivSpec = IvParameterSpec(iv)
+
+        // Decryption
+        val cipher = Cipher.getInstance(cipherInstance)
         cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
-        decrypted = cipher.doFinal(encrypted)
+
+        val decrypted = cipher.doFinal(encrypted)
+        return decrypted
+
     } catch (e: Exception) {
         println("decryption exception $e")
+        throw e
     }
-
-    return decrypted
 }
-
-fun keystoreEncrypt(dataToEncrypt: ByteArray): HashMap<String, ByteArray> {
-    val map = HashMap<String, ByteArray>()
-    try {
-
-        // 1
-        //Get the key
-        val keyStore = KeyStore.getInstance("AndroidKeyStore")
-        keyStore.load(null)
-
-        val secretKeyEntry =
-            keyStore.getEntry("MyKeyAlias", null) as KeyStore.SecretKeyEntry
-        val secretKey = secretKeyEntry.secretKey
-
-        // 2
-        //Encrypt data
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey)
-        val ivBytes = cipher.iv
-        val encryptedBytes = cipher.doFinal(dataToEncrypt)
-
-        // 3
-        map["iv"] = ivBytes
-        map["encrypted"] = encryptedBytes
-    } catch (e: Throwable) {
-        e.printStackTrace()
-    }
-
-    return map
-}
-
-fun keystoreDecrypt(map: HashMap<String, ByteArray>): ByteArray? {
-    var decrypted: ByteArray? = null
-    try {
-        // 1
-        //Get the key
-        val keyStore = KeyStore.getInstance("AndroidKeyStore")
-        keyStore.load(null)
-
-        val secretKeyEntry =
-            keyStore.getEntry("MyKeyAlias", null) as KeyStore.SecretKeyEntry
-        val secretKey = secretKeyEntry.secretKey
-
-        // 2
-        //Extract info from map
-        val encryptedBytes = map["encrypted"]
-        val ivBytes = map["iv"]
-
-        // 3
-        //Decrypt data
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val spec = GCMParameterSpec(128, ivBytes)
-        cipher.init(Cipher.DECRYPT_MODE, secretKey, spec)
-        decrypted = cipher.doFinal(encryptedBytes)
-    } catch (e: Throwable) {
-        e.printStackTrace()
-    }
-
-    return decrypted
-}
-
 
